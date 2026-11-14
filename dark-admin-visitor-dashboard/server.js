@@ -1,260 +1,207 @@
 
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Admin Console // DARK ADMIN</title>
-  <link rel="stylesheet" href="/style.css">
-</head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="/">DARK<span>ADMIN</span></a>
-    <span class="eyebrow">PRIVATE CONSOLE</span>
-  </header>
+const express = require("express");
+const session = require("express-session");
+const Database = require("better-sqlite3");
+const crypto = require("crypto");
+const path = require("path");
 
-  <main class="dashboard">
-    <section id="loginPanel" class="panel login">
-      <div class="eyebrow">● AUTHENTICATION REQUIRED</div>
-      <h1>ADMIN LOGIN<span>.</span></h1>
-      <form id="loginForm">
-        <label for="password">Admin password</label>
-        <input id="password" type="password"
-          autocomplete="current-password" required>
-        <button type="submit">SIGN IN</button>
-        <p id="loginError" class="error" aria-live="polite"></p>
-      </form>
-    </section>
+const app = express();
+const db = new Database(process.env.DB_FILE || "visitors.db");
+const PORT = process.env.PORT || 3000;
 
-    <section id="dashPanel" hidden>
-      <div class="dash-head">
-        <div>
-          <div class="eyebrow">● ACCESS GRANTED</div>
-          <h1>OVERVIEW<span>.</span></h1>
-        </div>
-        <button id="logout" class="secondary">LOG OUT</button>
-      </div>
+if (!process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) {
+  console.error("Missing required environment variables.");
+  process.exit(1);
+}
 
-      <div class="stats">
-        <article class="panel">
-          <div class="muted">TOTAL OPT-IN VISITS</div>
-          <strong id="total">—</strong>
-        </article>
-        <article class="panel">
-          <div class="muted">OPT-IN VISITS TODAY</div>
-          <strong id="today">—</strong>
-        </article>
-        <article class="panel">
-          <div class="muted">REGISTERED ACCOUNTS</div>
-          <strong id="accountTotal">—</strong>
-        </article>
-      </div>
+db.exec(`
+  CREATE TABLE IF NOT EXISTS visits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    visited_at TEXT NOT NULL,
+    browser TEXT NOT NULL,
+    device TEXT NOT NULL
+  );
 
-      <section class="panel">
-        <div class="table-head">
-          <h2>REGISTERED ACCOUNTS</h2>
-          <button id="refreshAccounts" class="secondary">
-            REFRESH
-          </button>
-        </div>
-        <p class="muted small">
-          Accounts created through the website registration form.
-          Passwords are never displayed.
-        </p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>EMAIL</th>
-                <th>PHONE</th>
-                <th>CREATED</th>
-              </tr>
-            </thead>
-            <tbody id="accountRows">
-              <tr><td colspan="3">Loading accounts...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+  CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    phone TEXT,
+    created_at TEXT NOT NULL
+  );
+`);
 
-      <section class="panel">
-        <div class="table-head">
-          <h2>RECENT VISITS</h2>
-          <button id="refresh" class="secondary">REFRESH</button>
-        </div>
-        <p class="muted small">
-          Only visits where the visitor allowed basic analytics
-          appear here.
-        </p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>TIME</th>
-                <th>DEVICE</th>
-                <th>BROWSER</th>
-              </tr>
-            </thead>
-            <tbody id="rows">
-              <tr><td colspan="3">Loading visits...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+app.set("trust proxy", 1);
+app.use(express.json({ limit: "10kb" }));
 
-      <p id="dashboardError" class="error" aria-live="polite"></p>
-    </section>
-  </main>
+app.use(session({
+  name: "darkadmin.sid",
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 1000 * 60 * 60 * 8
+  }
+}));
 
-  <script>
-    const loginPanel = document.getElementById("loginPanel");
-    const dashPanel = document.getElementById("dashPanel");
-    const rows = document.getElementById("rows");
-    const accountRows = document.getElementById("accountRows");
+app.use(express.static(path.join(__dirname, "public")));
 
-    const fmt = value => value
-      ? new Date(value).toLocaleString()
-      : "Not provided";
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.isAdmin) return next();
+  return res.status(401).json({ error: "Admin login required" });
+}
 
-    async function loadStats() {
-      const error = document.getElementById("dashboardError");
-      error.textContent = "";
+function identifyBrowser(ua = "") {
+  if (/Edg\//.test(ua)) return "Microsoft Edge";
+  if (/Firefox\//.test(ua)) return "Firefox";
+  if (/Chrome\//.test(ua) && !/Chromium/.test(ua)) return "Chrome";
+  if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return "Safari";
+  return "Other / unknown";
+}
 
-      try {
-        const response = await fetch("/api/admin/stats");
+function identifyDevice(ua = "") {
+  if (/iPad|Tablet/i.test(ua)) return "Tablet";
+  if (/Mobile|Android|iPhone/i.test(ua)) return "Mobile";
+  return "Desktop";
+}
 
-        if (response.status === 401) {
-          loginPanel.hidden = false;
-          dashPanel.hidden = true;
-          return;
-        }
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16);
+    crypto.scrypt(password, salt, 64, (err, key) => {
+      if (err) return reject(err);
+      resolve(salt.toString("hex") + ":" + key.toString("hex"));
+    });
+  });
+}
 
-        if (!response.ok) {
-          throw new Error("Could not load dashboard information.");
-        }
+// Register a website account.
+app.post("/api/register", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    const phone = String(req.body?.phone || "").trim();
 
-        const data = await response.json();
-
-        loginPanel.hidden = true;
-        dashPanel.hidden = false;
-
-        document.getElementById("total").textContent =
-          data.total ?? 0;
-
-        document.getElementById("today").textContent =
-          data.today ?? 0;
-
-        const accounts = Array.isArray(data.accounts)
-          ? data.accounts
-          : [];
-
-        document.getElementById("accountTotal").textContent =
-          accounts.length;
-
-        accountRows.replaceChildren();
-
-        if (accounts.length === 0) {
-          accountRows.innerHTML =
-            '<tr><td colspan="3">No registered accounts found.</td></tr>';
-        } else {
-          for (const account of accounts) {
-            const tr = document.createElement("tr");
-
-            for (const value of [
-              account.email || "Not provided",
-              account.phone || "Not provided",
-              fmt(account.created_at)
-            ]) {
-              const td = document.createElement("td");
-              td.textContent = value;
-              tr.appendChild(td);
-            }
-
-            accountRows.appendChild(tr);
-          }
-        }
-
-        rows.replaceChildren();
-
-        const visits = Array.isArray(data.visits)
-          ? data.visits
-          : [];
-
-        if (visits.length === 0) {
-          rows.innerHTML =
-            '<tr><td colspan="3">No opted-in visits yet.</td></tr>';
-        } else {
-          for (const visit of visits) {
-            const tr = document.createElement("tr");
-
-            for (const value of [
-              fmt(visit.visited_at),
-              visit.device || "Unknown",
-              visit.browser || "Unknown"
-            ]) {
-              const td = document.createElement("td");
-              td.textContent = value;
-              tr.appendChild(td);
-            }
-
-            rows.appendChild(tr);
-          }
-        }
-      } catch (err) {
-        error.textContent = err.message;
-      }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Enter a valid email address." });
     }
 
-    document.getElementById("loginForm")
-      .addEventListener("submit", async event => {
-        event.preventDefault();
-
-        const error = document.getElementById("loginError");
-        error.textContent = "";
-
-        try {
-          const response = await fetch("/api/admin/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              password: document.getElementById("password").value
-            })
-          });
-
-          if (!response.ok) {
-            error.textContent = "Login failed. Check your password.";
-            return;
-          }
-
-          await loadStats();
-        } catch {
-          error.textContent = "Could not connect to the server.";
-        }
+    if (password.length < 8 || password.length > 128) {
+      return res.status(400).json({
+        error: "Password must be between 8 and 128 characters."
       });
+    }
 
-    document.getElementById("refresh")
-      .addEventListener("click", loadStats);
+    if (phone.length > 30) {
+      return res.status(400).json({ error: "Phone number is too long." });
+    }
 
-    document.getElementById("refreshAccounts")
-      .addEventListener("click", loadStats);
+    const passwordHash = await hashPassword(password);
 
-    document.getElementById("logout")
-      .addEventListener("click", async () => {
-        await fetch("/api/admin/logout", { method: "POST" });
-        dashPanel.hidden = true;
-        loginPanel.hidden = false;
-        document.getElementById("password").value = "";
+    db.prepare(`
+      INSERT INTO accounts (email, password_hash, phone, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(
+      email,
+      passwordHash,
+      phone || null,
+      new Date().toISOString()
+    );
+
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+      return res.status(409).json({
+        error: "An account with that email already exists."
       });
+    }
 
-    fetch("/api/admin/check")
-      .then(response => response.json())
-      .then(data => {
-        if (data.authenticated) loadStats();
-      })
-      .catch(() => {
-        document.getElementById("loginError").textContent =
-          "Could not connect to the server.";
-      });
-  </script>
-</body>
-</html>
+    console.error("Registration failed:", err.message);
+    res.status(500).json({ error: "Registration failed." });
+  }
+});
+
+// Record analytics only when the visitor opts in.
+app.post("/api/visit", (req, res) => {
+  const ua = String(req.get("user-agent") || "").slice(0, 500);
+
+  db.prepare(`
+    INSERT INTO visits (visited_at, browser, device)
+    VALUES (?, ?, ?)
+  `).run(
+    new Date().toISOString(),
+    identifyBrowser(ua),
+    identifyDevice(ua)
+  );
+
+  res.json({ ok: true });
+});
+
+// Admin login.
+app.post("/api/admin/login", (req, res) => {
+  const password = String(req.body?.password || "");
+
+  if (password !== process.env.ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "Incorrect password" });
+  }
+
+  req.session.regenerate(err => {
+    if (err) {
+      return res.status(500).json({ error: "Could not start session." });
+    }
+
+    req.session.isAdmin = true;
+    res.json({ ok: true });
+  });
+});
+
+app.post("/api/admin/logout", requireAdmin, (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+app.get("/api/admin/check", (req, res) => {
+  res.json({ authenticated: !!req.session?.isAdmin });
+});
+
+// Admin dashboard data.
+app.get("/api/admin/stats", requireAdmin, (req, res) => {
+  const total = db.prepare(
+    "SELECT COUNT(*) AS n FROM visits"
+  ).get().n;
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const todayCount = db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM visits
+    WHERE substr(visited_at, 1, 10) = ?
+  `).get(today).n;
+
+  const visits = db.prepare(`
+    SELECT id, visited_at, browser, device
+    FROM visits
+    ORDER BY id DESC
+    LIMIT 200
+  `).all();
+
+  const accounts = db.prepare(`
+    SELECT email, phone, created_at
+    FROM accounts
+    ORDER BY id DESC
+    LIMIT 500
+  `).all();
+
+  res.json({
+    total,
+    today: todayCount,
+    visits,
+    accounts
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`DARKADMIN running on port ${PORT}`);
+});
