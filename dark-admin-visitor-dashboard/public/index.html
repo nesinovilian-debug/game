@@ -1,39 +1,189 @@
+
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Welcome // DARK ADMIN</title>
+  <title>Welcome</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="visitor">
   <main class="hero">
     <div class="eyebrow">● SYSTEM ONLINE</div>
     <h1>WELCOME<span>.</span></h1>
-    <p class="muted">You made it. Explore the site.</p>
-    <div class="notice">
-      <strong>Privacy notice</strong>
-      <p>This site can record the time of your visit, your browser, and whether you're using a phone, tablet, or computer—but only if you choose to allow basic analytics. It does not collect your name, phone number, home address, or precise location.</p>
+    <p class="muted">Create an account to explore the site.</p>
+
+    <section class="notice">
+      <h2>Create your account</h2>
+      <form id="registerForm">
+        <label for="email">Email address (required)</label>
+        <input id="email" type="email" autocomplete="email"
+          placeholder="you@example.com" required>
+
+        <label for="password">Create a website password</label>
+        <input id="password" type="password"
+          autocomplete="new-password" minlength="8"
+          placeholder="At least 8 characters" required>
+
+        <label for="phone">Phone number (optional)</label>
+        <input id="phone" type="tel" autocomplete="tel"
+          placeholder="Your phone number">
+
+        <button type="submit">CREATE ACCOUNT</button>
+      </form>
+      <p id="registerStatus" class="small" aria-live="polite"></p>
+    </section>
+
+    <section class="notice">
+      <strong>Privacy and analytics</strong>
+      <p>
+        With your permission, this website can record basic visit
+        information such as your browser, device and visit time.
+        Approximate location may be estimated from your network.
+        Precise device location is optional and requires separate
+        browser permission. Email and phone details are used only
+        as explained in the site's privacy notice.
+      </p>
+
       <div class="actions">
         <button id="allow">ALLOW BASIC ANALYTICS</button>
         <button id="decline" class="secondary">NO THANKS</button>
       </div>
-      <p id="status" class="small" aria-live="polite"></p>
-    </div>
+      <p id="analyticsStatus" class="small" aria-live="polite"></p>
+    </section>
+
+    <section class="notice">
+      <strong>Website notifications</strong>
+      <p>
+        Allow notifications to receive messages and updates from
+        this website. This does not share your location.
+      </p>
+      <button id="notifications" type="button">
+        ALLOW NOTIFICATIONS
+      </button>
+      <p id="notificationStatus" class="small" aria-live="polite"></p>
+    </section>
+
+    <section class="notice">
+      <strong>Clickyes</strong>
+      <p>
+        If you choose to share precise location, your browser will
+        ask for permission to provide your device's location.
+        This is separate from notifications and is optional.
+      </p>
+      <button id="location" type="button">
+        CLICK YES
+      </button>
+      <p id="locationStatus" class="small" aria-live="polite"></p>
+    </section>
   </main>
+
   <script>
-    const statusLine = document.getElementById("status");
-    document.getElementById("allow").addEventListener("click", async () => {
-      const response = await fetch("/api/visit", { method: "POST" });
-      statusLine.textContent = response.ok
-        ? "Thanks. Your basic visit analytics were recorded."
-        : "Analytics could not be recorded right now.";
-      document.getElementById("allow").disabled = true;
-    });
-    document.getElementById("decline").addEventListener("click", () => {
-      statusLine.textContent = "No analytics were recorded.";
-      document.getElementById("allow").disabled = true;
-    });
+    const analyticsStatus =
+      document.getElementById("analyticsStatus");
+
+    document.getElementById("allow").addEventListener("click",
+      async () => {
+        try {
+          const response = await fetch("/api/visit", {
+            method: "POST"
+          });
+
+          analyticsStatus.textContent = response.ok
+            ? "Basic analytics recorded. Thank you."
+            : "Analytics could not be recorded.";
+
+          document.getElementById("allow").disabled = true;
+        } catch {
+          analyticsStatus.textContent =
+            "The server is currently unavailable.";
+        }
+      }
+    );
+
+    document.getElementById("decline").addEventListener("click",
+      () => {
+        analyticsStatus.textContent =
+          "No basic analytics were recorded.";
+        document.getElementById("allow").disabled = true;
+      }
+    );
+
+    document.getElementById("notifications")
+      .addEventListener("click", async () => {
+        const status =
+          document.getElementById("notificationStatus");
+
+        if (!("Notification" in window)) {
+          status.textContent =
+            "Notifications are not supported by this browser.";
+          return;
+        }
+
+        try {
+          const permission =
+            await Notification.requestPermission();
+
+          status.textContent = permission === "granted"
+            ? "Notifications allowed. Website push messages may require additional setup."
+            : "Notifications were not enabled.";
+        } catch {
+          status.textContent =
+            "Could not request notification permission.";
+        }
+      });
+
+    document.getElementById("location")
+      .addEventListener("click", () => {
+        const status =
+          document.getElementById("locationStatus");
+
+        if (!("geolocation" in navigator)) {
+          status.textContent =
+            "Location is not supported by this browser.";
+          return;
+        }
+
+        status.textContent = "Waiting for browser permission...";
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            status.textContent =
+              "Location permission granted. Location is available in this browser, but has not been sent to the server.";
+          },
+          (error) => {
+            status.textContent =
+              error.code === 1
+                ? "Location permission was denied."
+                : "Location could not be obtained.";
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0
+          }
+        );
+      });
+
+    document.getElementById("registerForm")
+      .addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const status =
+          document.getElementById("registerStatus");
+
+        const account = {
+          email: document.getElementById("email").value,
+          password: document.getElementById("password").value,
+          phone: document.getElementById("phone").value
+        };
+
+        status.textContent =
+          "Registration is not connected yet. The server needs to be updated first.";
+
+        // Do not send passwords until the secure registration
+        // endpoint has been implemented on the server.
+      });
   </script>
 </body>
 </html>
