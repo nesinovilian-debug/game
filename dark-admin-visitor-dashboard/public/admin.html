@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin Console // DARK ADMIN</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">DARK<span>ADMIN</span></a>
+    <span class="eyebrow">PRIVATE CONSOLE</span>
+  </header>
+  <main class="dashboard">
+    <section id="loginPanel" class="panel login">
+      <div class="eyebrow">● AUTHENTICATION REQUIRED</div>
+      <h1>ADMIN LOGIN<span>.</span></h1>
+      <form id="loginForm">
+        <label for="password">Admin password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="submit">SIGN IN</button>
+        <p id="loginError" class="error" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="dashPanel" hidden>
+      <div class="dash-head">
+        <div><div class="eyebrow">● ACCESS GRANTED</div><h1>OVERVIEW<span>.</span></h1></div>
+        <button id="logout" class="secondary">LOG OUT</button>
+      </div>
+      <div class="stats">
+        <article class="panel"><div class="muted">TOTAL OPT-IN VISITS</div><strong id="total">—</strong></article>
+        <article class="panel"><div class="muted">OPT-IN VISITS TODAY</div><strong id="today">—</strong></article>
+      </div>
+      <section class="panel">
+        <div class="table-head"><h2>RECENT VISITS</h2><button id="refresh" class="secondary">REFRESH</button></div>
+        <p class="muted small">Only visits where the visitor selected “Allow basic analytics” appear here. No names, phone numbers, home addresses, IP addresses, or precise locations are collected.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>TIME</th><th>DEVICE</th><th>BROWSER</th></tr></thead>
+            <tbody id="rows"><tr><td colspan="3">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script>
+    const loginPanel = document.getElementById("loginPanel");
+    const dashPanel = document.getElementById("dashPanel");
+    const rows = document.getElementById("rows");
+    const fmt = value => new Date(value).toLocaleString();
+
+    async function loadStats() {
+      const r = await fetch("/api/admin/stats");
+      if (r.status === 401) { loginPanel.hidden = false; dashPanel.hidden = true; return; }
+      const data = await r.json();
+      loginPanel.hidden = true; dashPanel.hidden = false;
+      document.getElementById("total").textContent = data.total;
+      document.getElementById("today").textContent = data.today;
+      rows.innerHTML = "";
+      if (!data.visits.length) {
+        rows.innerHTML = '<tr><td colspan="3">No opted-in visits yet.</td></tr>';
+        return;
+      }
+      for (const visit of data.visits) {
+        const tr = document.createElement("tr");
+        for (const value of [fmt(visit.visited_at), visit.device, visit.browser]) {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.appendChild(td);
+        }
+        rows.appendChild(tr);
+      }
+    }
+
+    document.getElementById("loginForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      const r = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: document.getElementById("password").value })
+      });
+      if (r.ok) { document.getElementById("loginError").textContent = ""; loadStats(); }
+      else document.getElementById("loginError").textContent = "Login failed. Check your password.";
+    });
+    document.getElementById("refresh").addEventListener("click", loadStats);
+    document.getElementById("logout").addEventListener("click", async () => {
+      await fetch("/api/admin/logout", { method: "POST" });
+      dashPanel.hidden = true; loginPanel.hidden = false;
+      document.getElementById("password").value = "";
+    });
+    fetch("/api/admin/check").then(r => r.json()).then(d => {
+      if (d.authenticated) loadStats();
+    });
+  </script>
+</body>
+</html>

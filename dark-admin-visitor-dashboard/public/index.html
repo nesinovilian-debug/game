@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Welcome // DARK ADMIN</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="visitor">
+  <main class="hero">
+    <div class="eyebrow">● SYSTEM ONLINE</div>
+    <h1>WELCOME<span>.</span></h1>
+    <p class="muted">You made it. Explore the site.</p>
+    <div class="notice">
+      <strong>Privacy notice</strong>
+      <p>This site can record the time of your visit, your browser, and whether you're using a phone, tablet, or computer—but only if you choose to allow basic analytics. It does not collect your name, phone number, home address, or precise location.</p>
+      <div class="actions">
+        <button id="allow">ALLOW BASIC ANALYTICS</button>
+        <button id="decline" class="secondary">NO THANKS</button>
+      </div>
+      <p id="status" class="small" aria-live="polite"></p>
+    </div>
+  </main>
+  <script>
+    const statusLine = document.getElementById("status");
+    document.getElementById("allow").addEventListener("click", async () => {
+      const response = await fetch("/api/visit", { method: "POST" });
+      statusLine.textContent = response.ok
+        ? "Thanks. Your basic visit analytics were recorded."
+        : "Analytics could not be recorded right now.";
+      document.getElementById("allow").disabled = true;
+    });
+    document.getElementById("decline").addEventListener("click", () => {
+      statusLine.textContent = "No analytics were recorded.";
+      document.getElementById("allow").disabled = true;
+    });
+  </script>
+</body>
+</html>
